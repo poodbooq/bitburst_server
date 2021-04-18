@@ -12,6 +12,7 @@ import (
 type Postgres interface {
 	UpsertObject(ctx context.Context, obj models.Object) error
 	DeleteObjectByID(ctx context.Context, id int) error
+	GetAll(ctx context.Context) ([]models.Object, error)
 }
 
 type Config struct {
@@ -84,4 +85,21 @@ func (p *postgres) UpsertObject(ctx context.Context, obj models.Object) error {
 func (p *postgres) DeleteObjectByID(ctx context.Context, id int) error {
 	_, err := p.pg.Exec(ctx, `DELETE FROM objects WHERE id = $1`, id)
 	return err
+}
+
+func (p *postgres) GetAll(ctx context.Context) (objects []models.Object, err error) {
+	rows, err := p.pg.Query(ctx, "SELECT id, last_seen_at FROM objects")
+	if err != nil {
+		return nil, err
+	}
+
+	for rows.Next() {
+		var obj models.Object
+		err = rows.Scan(&obj.ID, &obj.LastSeenAt)
+		if err != nil {
+			return nil, err
+		}
+		objects = append(objects, obj)
+	}
+	return objects, nil
 }

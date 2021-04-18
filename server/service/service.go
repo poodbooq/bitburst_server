@@ -41,10 +41,10 @@ type service struct {
 
 	isRunning bool
 
-	inputIDsCh      chan int
-	refreshIDsCh    chan int
-	upsertObjectsCh chan models.Object
-	deleteObjectsCh chan int
+	inputCh      chan int
+	expirationCh chan int
+	upsertCh     chan models.Object
+	deleteCh     chan int
 
 	timers *timer
 }
@@ -62,15 +62,15 @@ func Load(db postgres.Postgres, log logger.Logger, cfg Config) *service {
 		}
 		client := &http.Client{Timeout: time.Duration(cfg.HTTP.TimeoutSec) * time.Second, Transport: tr}
 		singleton = &service{
-			database:        db,
-			log:             log,
-			cfg:             cfg,
-			router:          httprouter.New(),
-			httpClient:      client,
-			inputIDsCh:      make(chan int, cfg.MaxObjectsPerRequest),
-			refreshIDsCh:    make(chan int, cfg.MaxObjectsPerRequest),
-			upsertObjectsCh: make(chan models.Object, cfg.MaxObjectsPerRequest),
-			deleteObjectsCh: make(chan int, cfg.MaxObjectsPerRequest),
+			database:     db,
+			log:          log,
+			cfg:          cfg,
+			router:       httprouter.New(),
+			httpClient:   client,
+			inputCh:      make(chan int, cfg.MaxObjectsPerRequest),
+			expirationCh: make(chan int, cfg.MaxObjectsPerRequest),
+			upsertCh:     make(chan models.Object, cfg.MaxObjectsPerRequest),
+			deleteCh:     make(chan int, cfg.MaxObjectsPerRequest),
 			timers: &timer{
 				mu:   new(sync.Mutex),
 				byID: make(map[int]*time.Timer),
@@ -82,16 +82,17 @@ func Load(db postgres.Postgres, log logger.Logger, cfg Config) *service {
 }
 
 func (s *service) Run(ctx context.Context) {
-	if s.isRunning {
+	if s.isRunning { // preventing multiple runs
 		return
 	}
 	s.isRunning = true
 
-	go s.listenCallback(ctx)
-	go s.upsertObjects(ctx)
-	go s.getObjectsInfo(ctx)
-	go s.handleObjectsExpiration(ctx)
-	go s.deleteObjects(ctx)
+	go s.coldStart(ctx)               // get all existing objects from database and handle their expirations if no object with such id came
+	go s.handleCallbackRoute(ctx)     // listening requests with object ids from tester program and passing ids to input channel
+	go s.retrieveObjects(ctx)         // reading input channel, retrieving objects' statuses and passing them to upsert channel
+	go s.handleUpsert(ctx)            // reading upsert channel, upserting all incoming objects
+	go s.handleObjectsExpiration(ctx) // handle expire time for objects, that weren't received repeatedly for the predefined time
+	go s.handleDelete(ctx)            // delete expired objects
 	go func() { _ = http.ListenAndServe(fmt.Sprintf(":%v", s.cfg.HTTP.ListenPort), s.router) }()
 
 	for {
@@ -104,18 +105,29 @@ func (s *service) Run(ctx context.Context) {
 }
 
 func (s *service) close() {
-	close(s.refreshIDsCh)
-	close(s.inputIDsCh)
-	close(s.deleteObjectsCh)
-	close(s.upsertObjectsCh)
+	close(s.expirationCh)
+	close(s.inputCh)
+	close(s.deleteCh)
+	close(s.upsertCh)
 }
 
-func (s *service) deleteObjects(ctx context.Context) {
+func (s *service) coldStart(ctx context.Context) {
+	objs, err := s.database.GetAll(ctx)
+	if err != nil {
+		s.log.Error(err)
+		return
+	}
+	for i := range objs {
+		s.expirationCh <- objs[i].ID
+	}
+}
+
+func (s *service) handleDelete(ctx context.Context) {
 	for {
 		select {
 		case <-ctx.Done():
 			return
-		case id := <-s.deleteObjectsCh:
+		case id := <-s.deleteCh:
 			err := s.database.DeleteObjectByID(ctx, id)
 			if err != nil {
 				s.log.Error(err)
@@ -131,7 +143,7 @@ func (s *service) handleObjectsExpiration(ctx context.Context) {
 		select {
 		case <-ctx.Done():
 			return
-		case id := <-s.refreshIDsCh:
+		case id := <-s.expirationCh:
 			s.timers.mu.Lock()
 			if timer, ok := s.timers.byID[id]; !ok {
 				s.timers.byID[id] = time.NewTimer(time.Second * time.Duration(s.cfg.RetentionPolicySec))
@@ -142,7 +154,7 @@ func (s *service) handleObjectsExpiration(ctx context.Context) {
 					s.log.Debug("expired object with id %v, sending to delete chan", id)
 					s.timers.mu.Lock()
 					delete(s.timers.byID, id)
-					s.deleteObjectsCh <- id
+					s.deleteCh <- id
 					s.timers.mu.Unlock()
 				}(id)
 			} else {
@@ -150,19 +162,19 @@ func (s *service) handleObjectsExpiration(ctx context.Context) {
 					<-timer.C
 				}
 				s.log.Debug("received id %v before expiration, refreshing timer", id)
-				timer.Reset(time.Second * time.Duration(s.cfg.RetentionPolicySec))
+				timer.Reset(time.Second * time.Duration(s.cfg.RetentionPolicySec)) // refresh timer if id was received before expire
 				s.timers.mu.Unlock()
 			}
 		}
 	}
 }
 
-func (s *service) getObjectsInfo(ctx context.Context) {
+func (s *service) retrieveObjects(ctx context.Context) {
 	for {
 		select {
 		case <-ctx.Done():
 			return
-		case id := <-s.inputIDsCh:
+		case id := <-s.inputCh:
 			go func(ctx context.Context, id int) {
 				req, err := http.NewRequestWithContext(
 					ctx,
@@ -197,19 +209,20 @@ func (s *service) getObjectsInfo(ctx context.Context) {
 					now := time.Now().UTC()
 					info.LastSeenAt = &now
 				}
-				s.upsertObjectsCh <- info
-				s.refreshIDsCh <- info.ID
+
+				s.upsertCh <- info
+				s.expirationCh <- info.ID
 			}(ctx, id)
 		}
 	}
 }
 
-func (s *service) upsertObjects(ctx context.Context) {
+func (s *service) handleUpsert(ctx context.Context) {
 	for {
 		select {
 		case <-ctx.Done():
 			return
-		case obj := <-s.upsertObjectsCh:
+		case obj := <-s.upsertCh:
 			s.log.Debug("upserting object: id=%v, online=%v", obj.ID, obj.Online)
 			if err := s.database.UpsertObject(ctx, obj); err != nil {
 				s.log.Error(err)
@@ -218,12 +231,14 @@ func (s *service) upsertObjects(ctx context.Context) {
 	}
 }
 
-func (s *service) listenCallback(ctx context.Context) {
+func (s *service) handleCallbackRoute(_ context.Context) {
 	s.router.POST("/callback", func(w http.ResponseWriter, r *http.Request, _ httprouter.Params) {
 		dec := json.NewDecoder(r.Body)
 		var input models.ObjectsInput
 		err := dec.Decode(&input)
-		_ = r.Body.Close()
+		if errBodyClose := r.Body.Close(); errBodyClose != nil {
+			s.log.Error(errBodyClose)
+		}
 		if err != nil {
 			s.log.Error(err)
 			http.Error(w, "invalid request", http.StatusBadRequest)
@@ -231,7 +246,7 @@ func (s *service) listenCallback(ctx context.Context) {
 			go func() {
 				for i := range input.ObjectIDs {
 					s.log.Debug("retrieved id: %v", input.ObjectIDs[i])
-					s.inputIDsCh <- input.ObjectIDs[i]
+					s.inputCh <- input.ObjectIDs[i]
 				}
 			}()
 		}
