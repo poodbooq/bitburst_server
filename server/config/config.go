@@ -18,9 +18,9 @@ type config struct {
 }
 
 var (
-	cfg           *config
-	once = new(sync.Once)
-	noCfgFoundErr = errors.New("no env config found")
+	cfg              *config
+	once             = new(sync.Once)
+	errNoConfigFound = errors.New("no env config found")
 )
 
 func Load() (*config, error) {
@@ -46,11 +46,11 @@ func Load() (*config, error) {
 func loadServiceCfg() (service.Config, error) {
 	var (
 		serviceCfg service.Config
-		err error
+		err        error
 	)
 	maxObjStr, ok := os.LookupEnv("MAX_OBJECTS_PER_REQUEST")
 	if !ok {
-		return service.Config{}, noCfgFoundErr
+		return service.Config{}, errNoConfigFound
 	}
 	serviceCfg.MaxObjectsPerRequest, err = strconv.Atoi(maxObjStr)
 	if err != nil {
@@ -58,7 +58,7 @@ func loadServiceCfg() (service.Config, error) {
 	}
 	retentionStr, ok := os.LookupEnv("RETENTION_POLICY_SEC")
 	if !ok {
-		return service.Config{}, noCfgFoundErr
+		return service.Config{}, errNoConfigFound
 	}
 	serviceCfg.RetentionPolicySec, err = strconv.Atoi(retentionStr)
 	if err != nil {
@@ -66,19 +66,19 @@ func loadServiceCfg() (service.Config, error) {
 	}
 	serviceCfg.HTTP.ListenPort, ok = os.LookupEnv("LISTEN_PORT")
 	if !ok {
-		return service.Config{}, noCfgFoundErr
+		return service.Config{}, errNoConfigFound
 	}
 	serviceCfg.HTTP.TesterPort, ok = os.LookupEnv("TESTER_PORT")
 	if !ok {
-		return service.Config{}, noCfgFoundErr
+		return service.Config{}, errNoConfigFound
 	}
 	serviceCfg.HTTP.TesterHost, ok = os.LookupEnv("TESTER_HOST")
 	if !ok {
-		return service.Config{}, noCfgFoundErr
+		return service.Config{}, errNoConfigFound
 	}
 	timeoutStr, ok := os.LookupEnv("TIMEOUT_SEC")
 	if !ok {
-		return service.Config{}, noCfgFoundErr
+		return service.Config{}, errNoConfigFound
 	}
 	serviceCfg.HTTP.TimeoutSec, err = strconv.Atoi(timeoutStr)
 	if err != nil {
@@ -90,10 +90,10 @@ func loadServiceCfg() (service.Config, error) {
 func loadLoggerCfg() (logger.Config, error) {
 	var (
 		logCfg logger.Config
-		err error
+		err    error
 	)
 	if logCfgRaw, ok := os.LookupEnv("IS_PRODUCTION"); !ok {
-		return logCfg, noCfgFoundErr
+		return logCfg, errNoConfigFound
 	} else {
 		logCfg.IsProduction, err = strconv.ParseBool(logCfgRaw)
 		if err != nil {
@@ -110,22 +110,22 @@ func loadPostgresCfg() (postgres.Config, error) {
 		err   error
 	)
 	if pgCfg.User, ok = os.LookupEnv("POSTGRES_USER"); !ok {
-		return pgCfg, noCfgFoundErr
+		return pgCfg, errNoConfigFound
 	}
 	if pgCfg.Host, ok = os.LookupEnv("POSTGRES_HOST"); !ok {
-		return pgCfg, noCfgFoundErr
+		return pgCfg, errNoConfigFound
 	}
 	if pgCfg.Port, ok = os.LookupEnv("POSTGRES_PORT"); !ok {
-		return pgCfg, noCfgFoundErr
+		return pgCfg, errNoConfigFound
 	}
 	if pgCfg.Database, ok = os.LookupEnv("POSTGRES_DATABASE"); !ok {
-		return pgCfg, noCfgFoundErr
+		return pgCfg, errNoConfigFound
 	}
 	if pgCfg.SSLMode, ok = os.LookupEnv("POSTGRES_SSL_MODE"); !ok {
-		return pgCfg, noCfgFoundErr
+		return pgCfg, errNoConfigFound
 	}
 	if poolMaxConnsStr, ok := os.LookupEnv("POSTGRES_POOL_MAX_CONNS"); !ok {
-		return pgCfg, noCfgFoundErr
+		return pgCfg, errNoConfigFound
 	} else {
 		pgCfg.PoolMaxConnections, err = strconv.Atoi(poolMaxConnsStr)
 		if err != nil {
@@ -133,7 +133,7 @@ func loadPostgresCfg() (postgres.Config, error) {
 		}
 	}
 	if pgCfg.Password, ok = os.LookupEnv("POSTGRES_PASSWORD"); !ok {
-		return pgCfg, noCfgFoundErr
+		return pgCfg, errNoConfigFound
 	}
 	return pgCfg, nil
 }

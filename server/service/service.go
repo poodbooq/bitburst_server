@@ -15,9 +15,9 @@ import (
 )
 
 type Config struct {
-	MaxObjectsPerRequest             int
-	RetentionPolicySec int
-	HTTP                             HttpConfig
+	MaxObjectsPerRequest int
+	RetentionPolicySec   int
+	HTTP                 HttpConfig
 }
 
 type HttpConfig struct {
@@ -92,7 +92,7 @@ func (s *service) Run(ctx context.Context) {
 	go s.getObjectsInfo(ctx)
 	go s.handleObjectsExpiration(ctx)
 	go s.deleteObjects(ctx)
-	go func() {_ = http.ListenAndServe(fmt.Sprintf(":%v",s.cfg.HTTP.ListenPort), s.router) }()
+	go func() { _ = http.ListenAndServe(fmt.Sprintf(":%v", s.cfg.HTTP.ListenPort), s.router) }()
 
 	for {
 		select {
