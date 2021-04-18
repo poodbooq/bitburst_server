@@ -1,4 +1,4 @@
-.PHONY: up down stop build logs logs-server logs-tester logs-postgres reup
+.PHONY: up down stop build logs logs-server logs-tester logs-postgres stats reup
 
 up:
 	docker compose up -d
