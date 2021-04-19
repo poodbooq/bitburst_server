@@ -3,10 +3,11 @@ package postgres
 import (
 	"context"
 	"fmt"
+	"sync"
+
 	"github.com/jackc/pgx/v4/pgxpool"
 	"github.com/poodbooq/bitburst_server/logger"
 	"github.com/poodbooq/bitburst_server/models"
-	"sync"
 )
 
 type Postgres interface {

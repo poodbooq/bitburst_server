@@ -4,14 +4,15 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"net/http"
+	"sync"
+	"time"
+
 	"github.com/julienschmidt/httprouter"
 	"github.com/poodbooq/bitburst_server/logger"
 	"github.com/poodbooq/bitburst_server/models"
 	"github.com/poodbooq/bitburst_server/postgres"
 	"github.com/prometheus/common/log"
-	"net/http"
-	"sync"
-	"time"
 )
 
 type Config struct {

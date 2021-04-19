@@ -3,12 +3,13 @@ package main
 import (
 	"context"
 	"fmt"
+	"os"
+	"os/signal"
+
 	"github.com/poodbooq/bitburst_server/config"
 	"github.com/poodbooq/bitburst_server/logger"
 	"github.com/poodbooq/bitburst_server/postgres"
 	"github.com/poodbooq/bitburst_server/service"
-	"os"
-	"os/signal"
 )
 
 func main() {

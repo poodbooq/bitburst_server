@@ -1,12 +1,13 @@
 package config
 
 import (
-	"github.com/pkg/errors"
-	"github.com/poodbooq/bitburst_server/logger"
-	"github.com/poodbooq/bitburst_server/service"
 	"os"
 	"strconv"
 	"sync"
+
+	"github.com/pkg/errors"
+	"github.com/poodbooq/bitburst_server/logger"
+	"github.com/poodbooq/bitburst_server/service"
 
 	"github.com/poodbooq/bitburst_server/postgres"
 )

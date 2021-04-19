@@ -8,5 +8,5 @@ EOSQL
 psql -U postgres --dbname bitburst -tc "
 CREATE TABLE IF NOT EXISTS objects (
     id              INT          PRIMARY KEY,
-	last_seen_at    TIMESTAMP
+    last_seen_at    TIMESTAMP
 );"
