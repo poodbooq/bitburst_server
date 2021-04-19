@@ -12,7 +12,6 @@ import (
 	"github.com/poodbooq/bitburst_server/logger"
 	"github.com/poodbooq/bitburst_server/models"
 	"github.com/poodbooq/bitburst_server/postgres"
-	"github.com/prometheus/common/log"
 )
 
 type Config struct {
@@ -210,7 +209,7 @@ func (s *service) retrieveObjects(ctx context.Context) {
 				)
 				err = dec.Decode(&info)
 				if errBodyClose := resp.Body.Close(); errBodyClose != nil {
-					log.Error(err)
+					s.log.Error(err)
 				}
 				if err != nil {
 					s.log.Error(err)
