@@ -132,12 +132,14 @@ func (s *service) handleDelete(ctx context.Context) {
 		case <-ctx.Done():
 			return
 		case id := <-s.deleteCh:
-			err := s.database.DeleteObjectByID(ctx, id)
-			if err != nil {
-				s.log.Error(err)
-			} else {
-				s.log.Debug("deleted object with id %v", id)
-			}
+			go func(ctx context.Context, id int) {
+				err := s.database.DeleteObjectByID(ctx, id)
+				if err != nil {
+					s.log.Error(err)
+				} else {
+					s.log.Debug("deleted object with id %v", id)
+				}
+			}(ctx, id)
 		}
 	}
 }
@@ -237,10 +239,12 @@ func (s *service) handleUpsert(ctx context.Context) {
 		case <-ctx.Done():
 			return
 		case obj := <-s.upsertCh:
-			s.log.Debug("upserting object: id=%v, online=%v", obj.ID, obj.Online)
-			if err := s.database.UpsertObject(ctx, obj); err != nil {
-				s.log.Error(err)
-			}
+			go func(ctx context.Context, obj models.Object) {
+				s.log.Debug("upserting object: id=%v, online=%v", obj.ID, obj.Online)
+				if err := s.database.UpsertObject(ctx, obj); err != nil {
+					s.log.Error(err)
+				}
+			}(ctx, obj)
 		}
 	}
 }
