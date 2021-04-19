@@ -42,7 +42,7 @@ type service struct {
 	isRunning bool
 
 	inputCh      chan int
-	expirationCh chan int
+	expirationCh chan models.Object
 	upsertCh     chan models.Object
 	deleteCh     chan int
 
@@ -68,7 +68,7 @@ func Load(db postgres.Postgres, log logger.Logger, cfg Config) *service {
 			router:       httprouter.New(),
 			httpClient:   client,
 			inputCh:      make(chan int, cfg.MaxObjectsPerRequest),
-			expirationCh: make(chan int, cfg.MaxObjectsPerRequest),
+			expirationCh: make(chan models.Object, cfg.MaxObjectsPerRequest),
 			upsertCh:     make(chan models.Object, cfg.MaxObjectsPerRequest),
 			deleteCh:     make(chan int, cfg.MaxObjectsPerRequest),
 			timers: &timer{
@@ -89,8 +89,8 @@ func (s *service) Run(ctx context.Context) {
 
 	go s.coldStart(ctx)               // get all existing objects from database and handle their expirations if no object with such id came
 	go s.handleCallbackRoute(ctx)     // listening requests with object ids from tester program and passing ids to input channel
-	go s.retrieveObjects(ctx)         // reading input channel, retrieving objects' statuses and passing them to upsert channel
-	go s.handleUpsert(ctx)            // reading upsert channel, upserting all incoming objects
+	go s.retrieveObjects(ctx)         // reading input channel, retrieving objects' statuses and passing them to the channel depending on the object's status (online -> upsert && expire channels, offline -> delete channel)
+	go s.handleUpsert(ctx)            // reading upsert channel, upserting incoming online objects
 	go s.handleObjectsExpiration(ctx) // handle expire time for objects, that weren't received repeatedly for the predefined time
 	go s.handleDelete(ctx)            // delete expired objects
 	go func() { _ = http.ListenAndServe(fmt.Sprintf(":%v", s.cfg.HTTP.ListenPort), s.router) }()
@@ -118,7 +118,11 @@ func (s *service) coldStart(ctx context.Context) {
 		return
 	}
 	for i := range objs {
-		s.expirationCh <- objs[i].ID
+		if objs[i].LastSeenAt != nil && (time.Now().UTC().Sub(*objs[i].LastSeenAt) > time.Second*time.Duration(s.cfg.RetentionPolicySec)) {
+			s.deleteCh <- objs[i].ID
+		} else {
+			s.expirationCh <- objs[i]
+		}
 	}
 }
 
@@ -143,11 +147,16 @@ func (s *service) handleObjectsExpiration(ctx context.Context) {
 		select {
 		case <-ctx.Done():
 			return
-		case id := <-s.expirationCh:
+		case obj := <-s.expirationCh:
 			s.timers.mu.Lock()
-			if timer, ok := s.timers.byID[id]; !ok {
-				s.timers.byID[id] = time.NewTimer(time.Second * time.Duration(s.cfg.RetentionPolicySec))
-				s.log.Debug("set new timer for id %v", id)
+			if timer, ok := s.timers.byID[obj.ID]; !ok {
+				now := time.Now().UTC()
+				if obj.LastSeenAt != nil && now.Sub(*obj.LastSeenAt) < time.Second*time.Duration(s.cfg.RetentionPolicySec) {
+					s.timers.byID[obj.ID] = time.NewTimer(time.Second*time.Duration(s.cfg.RetentionPolicySec) - now.Sub(*obj.LastSeenAt))
+				} else {
+					s.timers.byID[obj.ID] = time.NewTimer(time.Second * time.Duration(s.cfg.RetentionPolicySec))
+				}
+				s.log.Debug("set new timer for id %v", obj.ID)
 				s.timers.mu.Unlock()
 				go func(id int) {
 					<-s.timers.byID[id].C
@@ -156,12 +165,12 @@ func (s *service) handleObjectsExpiration(ctx context.Context) {
 					delete(s.timers.byID, id)
 					s.deleteCh <- id
 					s.timers.mu.Unlock()
-				}(id)
+				}(obj.ID)
 			} else {
 				if !timer.Stop() {
 					<-timer.C
 				}
-				s.log.Debug("received id %v before expiration, refreshing timer", id)
+				s.log.Debug("received id %v before expiration, refreshing timer", obj.ID)
 				timer.Reset(time.Second * time.Duration(s.cfg.RetentionPolicySec)) // refresh timer if id was received before expire
 				s.timers.mu.Unlock()
 			}
@@ -210,8 +219,13 @@ func (s *service) retrieveObjects(ctx context.Context) {
 					info.LastSeenAt = &now
 				}
 
-				s.upsertCh <- info
-				s.expirationCh <- info.ID
+				switch info.Online {
+				case true:
+					s.upsertCh <- info     // update or insert online objects
+					s.expirationCh <- info // track expiration time
+				case false:
+					s.deleteCh <- info.ID // delete objects with offline status
+				}
 			}(ctx, id)
 		}
 	}
